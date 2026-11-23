@@ -62,7 +62,7 @@ struct RootView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showingCamera, onDismiss: { state.stopCamera() }) { cameraScreen }
+        .fullScreenCover(isPresented: $showingCamera) { cameraScreen }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = state.isCameraActive
         }
@@ -272,6 +272,7 @@ struct RootView: View {
             }
         }.background(.black).preferredColorScheme(.dark).onAppear { state.startCamera() }.onDisappear {
             state.restoreBrightness()
+            state.stopCamera()
             UIApplication.shared.isIdleTimerDisabled = false
         }
     }

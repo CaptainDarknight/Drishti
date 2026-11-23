@@ -82,6 +82,11 @@ struct RoutePoint: Codable, Identifiable {
         }
         pedometer.onIssue = { [weak self] message in self?.permissionMessage = message }
         camera.onDetections = { [weak self] objects in self?.consume(objects) }
+        camera.onIssue = { [weak self] message in
+            guard let self else { return }
+            self.isCameraActive = false
+            self.permissionMessage = message
+        }
         speechInput.onText = { [weak self] text in self?.destination = text }
         speechInput.onFinalText = { [weak self] text in
             guard let self else { return }
@@ -112,7 +117,8 @@ struct RoutePoint: Codable, Identifiable {
     func startCamera() {
         guard !isCameraActive else { return }
         isCameraActive = true
-        latestObstacle = "Path clear"
+        latestObstacle = "Scanning shapes"
+        distanceText = "Detection is not guaranteed"
         camera.start { [weak self] message in
             guard let self else { return }
             self.permissionMessage = message
@@ -125,12 +131,12 @@ struct RoutePoint: Codable, Identifiable {
         let query = destination.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { permissionMessage = "Enter a destination first."; return }
         let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-        if ["home", "go home", "take me home", "take me to home", "navigate home"].contains(normalized) {
+        if ["home", "go home", "back home", "take me home", "take me back home", "take me to home", "take me back to home", "take back home", "take back to home", "navigate home"].contains(normalized) {
             guard savedHome != nil else { permissionMessage = "Save your home location before asking Drishti to take you home."; return }
             goHome(); return
         }
         var destinationQuery = query
-        for prefix in ["please take me to ", "can you take me to ", "i want to go to ", "take me to ", "navigate to ", "go to ", "directions to "] where normalized.hasPrefix(prefix) {
+        for prefix in ["please take me to ", "can you take me to ", "i want to go to ", "take me back to ", "take back to ", "take me to ", "navigate to ", "go to ", "directions to "] where normalized.hasPrefix(prefix) {
             destinationQuery = String(query.dropFirst(prefix.count))
             break
         }
@@ -205,8 +211,8 @@ struct RoutePoint: Codable, Identifiable {
     private func consume(_ objects: [DetectedObject]) {
         detections = objects
         guard !objects.isEmpty else {
-            latestObstacle = "Path clear"
-            distanceText = "No object detected"
+            latestObstacle = "No shape detected"
+            distanceText = "Detection is not guaranteed"
             if vibrationEnabled { alerts.update(distanceMeters: nil) }
             return
         }
@@ -431,8 +437,10 @@ enum MapsLink {
             components.queryItems = [URLQueryItem(name: "daddr", value: destination), URLQueryItem(name: "dirflg", value: "w")]
         }
         guard let url = components.url else { completion?(false); return }
-        UIApplication.shared.open(url, options: [:]) { opened in
-            DispatchQueue.main.async { completion?(opened) }
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                DispatchQueue.main.async { completion?(opened) }
+            }
         }
     }
     static func open(coordinate: CLLocationCoordinate2D, completion: ((Bool) -> Void)? = nil) {

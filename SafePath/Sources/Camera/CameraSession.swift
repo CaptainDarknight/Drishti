@@ -13,20 +13,43 @@ final class CameraSession: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private let videoQueue = DispatchQueue(label: "drishti.camera.frames", qos: .userInitiated)
     private let videoOutput = AVCaptureVideoDataOutput()
     private let detector = ObjectDetector()
+    private let frameStateLock = NSLock()
+    private var acceptsFrames = false
     private var isConfigured = false
     private var startGeneration = 0
     private var isStartingOnMain = false
     private var runningOnMain = false
     var onDetections: (([DetectedObject]) -> Void)?
+    var onIssue: ((String) -> Void)?
+    private var runtimeErrorObserver: NSObjectProtocol?
 
     override init() {
         super.init()
         videoOutput.alwaysDiscardsLateVideoFrames = true
-        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        // Keep the camera buffers small on older devices such as iPhone SE (2nd generation).
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange]
         videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
         detector.onResult = { [weak self] observations in
             DispatchQueue.main.async { self?.publish(observations) }
         }
+        runtimeErrorObserver = NotificationCenter.default.addObserver(
+            forName: AVCaptureSession.runtimeErrorNotification,
+            object: captureSession,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+            guard self.runningOnMain || self.isStartingOnMain else { return }
+            let error = notification.userInfo?[AVCaptureSessionErrorKey] as? Error
+            self.logger.error("Camera runtime error: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+            self.runningOnMain = false
+            self.isStartingOnMain = false
+            self.setAcceptingFrames(false)
+            self.onIssue?("The camera stopped unexpectedly. Close other camera apps, then reopen obstacle awareness.")
+        }
+    }
+
+    deinit {
+        if let runtimeErrorObserver { NotificationCenter.default.removeObserver(runtimeErrorObserver) }
     }
 
     func start(completion: ((String?) -> Void)? = nil) {
@@ -70,6 +93,7 @@ final class CameraSession: NSObject, ObservableObject, AVCaptureVideoDataOutputS
                     }
                     self.isStartingOnMain = false
                     self.runningOnMain = true
+                    self.setAcceptingFrames(true)
                     self.logger.info("Camera capture session started")
                     completion?(nil)
                 }
@@ -93,7 +117,7 @@ final class CameraSession: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         let input = try AVCaptureDeviceInput(device: device)
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
-        captureSession.sessionPreset = .high
+        captureSession.sessionPreset = .vga640x480
         guard captureSession.canAddInput(input) else { throw CameraSetupError.cannotAddInput }
         captureSession.addInput(input)
         guard captureSession.canAddOutput(videoOutput) else {
@@ -108,7 +132,14 @@ final class CameraSession: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         startGeneration += 1
         isStartingOnMain = false
         runningOnMain = false
+        setAcceptingFrames(false)
         sessionQueue.async { [weak self] in self?.stopSessionOnQueue() }
+    }
+
+    private func setAcceptingFrames(_ accepts: Bool) {
+        frameStateLock.lock()
+        acceptsFrames = accepts
+        frameStateLock.unlock()
     }
 
     private func stopSessionOnQueue() {
@@ -117,6 +148,10 @@ final class CameraSession: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        frameStateLock.lock()
+        let shouldProcess = acceptsFrames
+        frameStateLock.unlock()
+        guard shouldProcess else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         detector.process(pixelBuffer: pixelBuffer)
     }

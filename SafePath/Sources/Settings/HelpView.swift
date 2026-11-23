@@ -19,7 +19,7 @@ struct HelpView: View {
                     Text("Spoken prompts use the current iPhone audio route, including connected earbuds. During a phone or FaceTime call, Drishti pauses speech. If supported by your earbuds, enable transparency mode manually.")
                 }
                 Section("Privacy and safety") {
-                    Text("Route breadcrumbs and saved home stay on this iPhone. Drishti is an assistive prototype, not a certified navigation device. Keep using a cane, guide dog, mobility training, and other support. Vision can miss or mislabel objects; the SE 2 may not provide reliable distance estimates. iOS may delay or throttle watch notifications.")
+                    Text("Route breadcrumbs and saved home stay on this iPhone. Drishti is an assistive prototype, not a certified navigation device. Keep using a cane, guide dog, mobility training, and other support. This build proposes rectangular shapes; it is not a general object-recognition model and can miss hazards. The SE 2 does not provide reliable distance estimates. iOS may delay or throttle watch notifications.")
                 }
                 Section("Camera and screen") {
                     Text("Obstacle awareness uses the rear camera while the full-screen camera view is open. iOS pauses camera analysis when Drishti is backgrounded; GPS route recording can continue with Always location access. Keep the phone unlocked while using obstacle awareness.")
