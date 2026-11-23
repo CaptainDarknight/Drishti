@@ -27,7 +27,7 @@ final class SpeechRecognitionManager {
         guard let recognizer, recognizer.isAvailable else { onError?("Speech recognition is temporarily unavailable."); return }
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement, options: [.duckOthers, .allowBluetooth])
+            try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true

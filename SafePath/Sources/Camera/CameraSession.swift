@@ -74,8 +74,8 @@ final class CameraSession: NSObject, ObservableObject, ARSessionDelegate {
             // If it cannot find a reliable hit, the UI reports that distance is unavailable.
             let resolution = frame.camera.imageResolution
             let viewportPoint = CGPoint(x: visionX * CGFloat(resolution.height), y: (1 - visionY) * CGFloat(resolution.width))
-            guard let query = frame.raycastQuery(from: viewportPoint, allowing: .estimatedPlane, alignment: .any),
-                  let result = session.raycast(query).first else { return nil }
+            let query = frame.raycastQuery(from: viewportPoint, allowing: .estimatedPlane, alignment: .any)
+            guard let result = session.raycast(query).first else { return nil }
             let cameraPosition = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
             let hitPosition = SIMD3<Float>(result.worldTransform.columns.3.x, result.worldTransform.columns.3.y, result.worldTransform.columns.3.z)
             let meters = simd_distance(cameraPosition, hitPosition)

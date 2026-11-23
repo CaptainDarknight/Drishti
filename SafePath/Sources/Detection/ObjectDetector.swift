@@ -41,7 +41,11 @@ final class ObjectDetector {
             guard let self else { return }
             defer { self.lock.lock(); self.running = false; self.lock.unlock() }
             let request: VNRequest
-            if let model = self.model { request = VNCoreMLRequest(model: model) }
+            if let model = self.model {
+                let coreMLRequest = VNCoreMLRequest(model: model)
+                coreMLRequest.imageCropAndScaleOption = .scaleFill
+                request = coreMLRequest
+            }
             else {
                 let rectangles = VNDetectRectanglesRequest()
                 rectangles.minimumConfidence = 0.55
@@ -49,7 +53,6 @@ final class ObjectDetector {
                 rectangles.maximumObservations = 8
                 request = rectangles
             }
-            (request as? VNImageBasedRequest)?.imageCropAndScaleOption = .scaleFill
             do { try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform([request]) }
             catch { self.logger.error("Vision detection request failed: \(error.localizedDescription, privacy: .public)"); return }
             let objects: [ObjectCandidate]
