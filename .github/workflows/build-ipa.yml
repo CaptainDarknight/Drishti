@@ -1,0 +1,28 @@
+name: Build unsigned iOS IPA
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build unsigned app
+        run: |
+          xcodebuild -project SafePath.xcodeproj -scheme SafePath -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package IPA
+        run: |
+          mkdir -p build/Payload
+          cp -R build/DerivedData/Build/Products/Release-iphoneos/SafePath.app build/Payload/
+          cd build && zip -r SafePath.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SafePath-unsigned-ipa
+          path: build/SafePath.ipa

@@ -1,0 +1,25 @@
+name: SafePath
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  SafePath:
+    type: application
+    platform: iOS
+    sources:
+      - path: SafePath/Sources
+    info:
+      path: SafePath/Resources/Info.plist
+    resources:
+      - path: SafePath/Resources/Assets.xcassets
+      - path: SafePath/Resources/Inter-Variable.ttf
+      - path: SafePath/Resources/Inter-OFL.txt
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.safepath
+        PRODUCT_NAME: SafePath
