@@ -5,8 +5,8 @@
   <key>UIAppFonts</key><array><string>Inter-Variable.ttf</string></array>
   <key>NSCameraUsageDescription</key><string>Drishti uses the camera for obstacle awareness while you walk.</string>
   <key>NSLocationWhenInUseUsageDescription</key><string>Drishti uses your location to record your walking route and save your home location.</string>
-  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>Drishti records your route while Google Maps is open during an active walk.</string>
-  <key>NSLocationAlwaysUsageDescription</key><string>Drishti records your route while Google Maps is open during an active walk.</string>
+  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>Drishti records your route while Apple Maps is open during an active walk.</string>
+  <key>NSLocationAlwaysUsageDescription</key><string>Drishti records your route while Apple Maps is open during an active walk.</string>
   <key>NSMicrophoneUsageDescription</key><string>Drishti listens briefly when you choose Speak destination.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Drishti turns your spoken destination into text so you can start a walking route.</string>
   <key>NSMotionUsageDescription</key><string>Drishti counts your steps during an active walk so you can see your walking progress.</string>

@@ -1,5 +1,8 @@
 import SwiftUI
 import AVKit
+import MapKit
+import UIKit
+import CoreLocation
 
 enum AppTypography {
     static let fontName = "Inter-Regular"
@@ -18,10 +21,10 @@ private enum SafePalette {
 struct RootView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showingHelp = false
     @State private var showingCamera = false
     @State private var selectedTab = 0
-    @State private var showingConnections = false
+    @State private var activeSheet: DrishtiSheet?
+    @FocusState private var destinationFocused: Bool
 
     var body: some View {
         ZStack {
@@ -36,6 +39,9 @@ struct RootView: View {
                         Text("Drishti is an assistive tool. Keep using your usual mobility aid.")
                             .font(.custom(AppTypography.fontName, size: 13, relativeTo: .footnote)).foregroundStyle(SafePalette.muted).fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 3).accessibilityLabel("Safety reminder. Drishti is an assistive tool. Continue using your usual mobility aid.")
+                        Text("Developed by Agraj")
+                            .font(.custom(AppTypography.fontName, size: 12, relativeTo: .footnote)).foregroundStyle(SafePalette.muted)
+                            .padding(.horizontal, 3)
                     }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
                 }
                 bottomBar
@@ -43,8 +49,19 @@ struct RootView: View {
         }
         .font(.custom(AppTypography.fontName, size: 17, relativeTo: .body))
         .preferredColorScheme(.light)
-        .sheet(isPresented: $showingHelp) { HelpView().environmentObject(state) }
-        .sheet(isPresented: $showingConnections) { DeviceConnectionsView().environmentObject(state) }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .help:
+                HelpView().environmentObject(state)
+            case .connections:
+                DeviceConnectionsView().environmentObject(state)
+            case .homePicker:
+                HomeLocationPickerView(initialCoordinate: state.savedHome) { coordinate in
+                    state.saveHome(at: coordinate)
+                    activeSheet = nil
+                }
+            }
+        }
         .fullScreenCover(isPresented: $showingCamera, onDismiss: { state.stopCamera() }) { cameraScreen }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = state.isCameraActive
@@ -70,11 +87,11 @@ struct RootView: View {
             }.onTapGesture(count: 3) { showingCamera = true }
                 .accessibilityHint("Triple tap to start obstacle awareness while Drishti is open.")
             Spacer()
-            Button { showingConnections = true } label: {
+            Button { activeSheet = .connections } label: {
                 Image(systemName: "earbuds").font(.system(size: 18, weight: .semibold)).foregroundStyle(SafePalette.ink)
                     .frame(width: 46, height: 46).background(SafePalette.surface, in: Circle())
             }.accessibilityLabel("Connect earbuds or set up a watch")
-            Button { showingHelp = true } label: {
+            Button { activeSheet = .help } label: {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 18, weight: .semibold)).foregroundStyle(SafePalette.ink)
                     .frame(width: 48, height: 48).background(.white, in: Circle())
             }.accessibilityLabel("Settings and help")
@@ -94,9 +111,12 @@ struct RootView: View {
             }
             Text("Plan a walk or head to a saved place.").scaledFont(size: 16).foregroundStyle(SafePalette.muted)
             destinationEntry
-            Button { state.startTrip() } label: {
-                Label("Start walking route", systemImage: "map.fill").frame(maxWidth: .infinity).frame(minHeight: 62)
-            }.buttonStyle(FilledButtonStyle(color: SafePalette.blue)).accessibilityHint("Opens a walking route in Google Maps and starts recording your path.")
+            Button {
+                destinationFocused = false
+                state.startTrip()
+            } label: {
+                Label("Start walking route in Apple Maps", systemImage: "map.fill").frame(maxWidth: .infinity).frame(minHeight: 62)
+            }.buttonStyle(FilledButtonStyle(color: SafePalette.blue)).accessibilityHint("Opens a walking route in Apple Maps and records your steps and GPS path when permissions allow.")
             HStack(spacing: 11) {
                 Button { state.saveHomeAtCurrentLocation() } label: {
                     Label("Save home", systemImage: "house.fill").frame(maxWidth: .infinity).frame(minHeight: 60)
@@ -105,6 +125,10 @@ struct RootView: View {
                     Label("Go home", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity).frame(minHeight: 60)
                 }.buttonStyle(FilledButtonStyle(color: SafePalette.mint)).disabled(state.savedHome == nil).opacity(state.savedHome == nil ? 0.55 : 1)
             }
+            Button { activeSheet = .homePicker } label: {
+                Label("Choose home on map", systemImage: "mappin.and.ellipse")
+                    .frame(maxWidth: .infinity).frame(minHeight: 48)
+            }.buttonStyle(SoftButtonStyle(color: SafePalette.blue))
         }.padding(19).background(.white, in: RoundedRectangle(cornerRadius: 25)).shadow(color: .black.opacity(0.035), radius: 14, y: 5)
     }
     private var destinationEntry: some View {
@@ -112,7 +136,9 @@ struct RootView: View {
             Image(systemName: "magnifyingglass").font(.system(size: 19, weight: .semibold)).foregroundStyle(SafePalette.blue)
             TextField("Where would you like to go?", text: $state.destination)
                 .scaledFont(size: 17, weight: .medium).foregroundStyle(SafePalette.ink)
-                .textInputAutocapitalization(.words).submitLabel(.go).accessibilityLabel("Destination")
+                .textInputAutocapitalization(.words).submitLabel(.go).focused($destinationFocused)
+                .onSubmit { destinationFocused = false; state.startTrip() }
+                .accessibilityLabel("Destination")
             Button { state.toggleVoiceDestination() } label: {
                 Image(systemName: state.isListeningForDestination ? "waveform.circle.fill" : "mic.fill")
                     .font(.system(size: 19, weight: .semibold)).foregroundStyle(state.isListeningForDestination ? SafePalette.orange : SafePalette.blue)
@@ -137,7 +163,7 @@ struct RootView: View {
                 metric("Obstacle notes", value: "\(state.currentTripObstacleCount)", icon: "viewfinder", tint: SafePalette.orange)
             }
             awarenessSummary
-            Button { showingConnections = true } label: {
+            Button { activeSheet = .connections } label: {
                 HStack(spacing: 13) {
                     Image(systemName: "earbuds").font(.system(size: 19, weight: .bold))
                     VStack(alignment: .leading, spacing: 3) {
@@ -166,7 +192,7 @@ struct RootView: View {
                 Label("Detection overlay", systemImage: "viewfinder.rectangular").scaledFont(size: 17, weight: .semibold).foregroundStyle(SafePalette.ink)
             }.tint(SafePalette.mint).padding(.vertical, 3)
             Button { state.isTripActive ? state.stopTrip() : state.startTrip() } label: {
-                Label(state.isTripActive ? "Stop path recording" : "Continue in Google Maps", systemImage: state.isTripActive ? "stop.fill" : "arrow.up.right.square")
+                Label(state.isTripActive ? "Stop path recording" : "Continue in Apple Maps", systemImage: state.isTripActive ? "stop.fill" : "arrow.up.right.square")
                     .frame(maxWidth: .infinity).frame(minHeight: 60)
             }.buttonStyle(SoftButtonStyle(color: SafePalette.blue))
         }.padding(20).background(.white, in: RoundedRectangle(cornerRadius: 25)).shadow(color: .black.opacity(0.035), radius: 14, y: 5)
@@ -249,6 +275,117 @@ struct RootView: View {
             UIApplication.shared.isIdleTimerDisabled = false
         }
     }
+}
+
+private enum DrishtiSheet: String, Identifiable {
+    case help, connections, homePicker
+    var id: String { rawValue }
+}
+
+private struct HomeLocationPickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let initialCoordinate: CLLocationCoordinate2D?
+    let onSave: (CLLocationCoordinate2D) -> Void
+    @State private var selectedCoordinate: CLLocationCoordinate2D?
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .bottom) {
+                SelectableHomeMap(initialCoordinate: initialCoordinate, selectedCoordinate: $selectedCoordinate)
+                    .ignoresSafeArea(edges: .bottom)
+                VStack(spacing: 10) {
+                    Text(selectedCoordinate.map { String(format: "Home pin: %.5f, %.5f", $0.latitude, $0.longitude) } ?? "Long-press the map to drop your home pin")
+                        .font(.custom(AppTypography.fontName, size: 14, relativeTo: .subheadline).weight(.semibold))
+                        .foregroundStyle(SafePalette.ink).padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(.white, in: Capsule())
+                    Button {
+                        guard let selectedCoordinate else { return }
+                        onSave(selectedCoordinate)
+                        dismiss()
+                    } label: {
+                        Label("Save this home location", systemImage: "house.fill")
+                            .frame(maxWidth: .infinity).frame(minHeight: 58)
+                    }.buttonStyle(FilledButtonStyle(color: SafePalette.blue))
+                        .disabled(selectedCoordinate == nil).opacity(selectedCoordinate == nil ? 0.55 : 1)
+                }.padding(18)
+            }
+            .navigationTitle("Choose home")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Cancel") { dismiss() } } }
+        }
+        .onAppear { selectedCoordinate = initialCoordinate }
+    }
+}
+
+private struct SelectableHomeMap: UIViewRepresentable {
+    let initialCoordinate: CLLocationCoordinate2D?
+    @Binding var selectedCoordinate: CLLocationCoordinate2D?
+
+    func makeCoordinator() -> Coordinator { Coordinator(selectedCoordinate: $selectedCoordinate) }
+
+    func makeUIView(context: Context) -> MKMapView {
+        let mapView = MKMapView(frame: .zero)
+        mapView.delegate = context.coordinator
+        mapView.showsCompass = true
+        mapView.showsScale = true
+        mapView.showsUserLocation = CLLocationManager.locationServicesEnabled()
+        let center = initialCoordinate ?? CLLocationCoordinate2D(latitude: 20.5937, longitude: 78.9629)
+        mapView.setRegion(MKCoordinateRegion(center: center, span: MKCoordinateSpan(latitudeDelta: 0.06, longitudeDelta: 0.06)), animated: false)
+        let press = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        press.minimumPressDuration = 0.45
+        mapView.addGestureRecognizer(press)
+        context.coordinator.mapView = mapView
+        return mapView
+    }
+
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        context.coordinator.selection = $selectedCoordinate
+        let pins = mapView.annotations.filter { $0 is HomeMapPin }
+        if let selectedCoordinate {
+            let unchanged = context.coordinator.displayedCoordinate.map {
+                abs($0.latitude - selectedCoordinate.latitude) < 0.000001 && abs($0.longitude - selectedCoordinate.longitude) < 0.000001
+            } ?? false
+            if !unchanged {
+                mapView.removeAnnotations(pins)
+                let pin = HomeMapPin(coordinate: selectedCoordinate)
+                mapView.addAnnotation(pin)
+                context.coordinator.displayedCoordinate = selectedCoordinate
+            }
+        } else if !pins.isEmpty {
+            mapView.removeAnnotations(pins)
+            context.coordinator.displayedCoordinate = nil
+        }
+    }
+
+    final class Coordinator: NSObject, MKMapViewDelegate {
+        var selection: Binding<CLLocationCoordinate2D?>
+        weak var mapView: MKMapView?
+        var displayedCoordinate: CLLocationCoordinate2D?
+
+        init(selectedCoordinate: Binding<CLLocationCoordinate2D?>) { selection = selectedCoordinate }
+
+        @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began, let mapView else { return }
+            selection.wrappedValue = mapView.convert(gesture.location(in: mapView), toCoordinateFrom: mapView)
+        }
+
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard annotation is HomeMapPin else { return nil }
+            let id = "home-pin"
+            let view = mapView.dequeueReusableAnnotationView(withIdentifier: id) as? MKMarkerAnnotationView ?? MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: id)
+            view.annotation = annotation
+            view.markerTintColor = .systemBlue
+            view.glyphImage = UIImage(systemName: "house.fill")
+            view.canShowCallout = true
+            return view
+        }
+    }
+}
+
+private final class HomeMapPin: NSObject, MKAnnotation {
+    let coordinate: CLLocationCoordinate2D
+    let title: String? = "Saved home"
+    init(coordinate: CLLocationCoordinate2D) { self.coordinate = coordinate }
 }
 
 private struct FilledButtonStyle: ButtonStyle {

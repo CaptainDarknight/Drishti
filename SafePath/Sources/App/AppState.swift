@@ -147,10 +147,10 @@ struct RoutePoint: Codable, Identifiable {
         location.start { [weak self] authorized in
             guard let self else { return }
             if !authorized {
-                self.permissionMessage = "Google Maps will open. Allow location access to record this walk in Drishti."
+                self.permissionMessage = "Apple Maps will open. Allow location access to record this walk in Drishti."
             }
             MapsLink.open(destination: destinationQuery) { opened in
-                if !opened { self.permissionMessage = "Could not open Google Maps. Check your internet connection and try again." }
+                if !opened { self.permissionMessage = "Could not open Apple Maps. Check your internet connection and try again." }
             }
         }
     }
@@ -158,9 +158,12 @@ struct RoutePoint: Codable, Identifiable {
     func saveHomeAtCurrentLocation() {
         permissionMessage = "Finding your location to save as home…"
         location.requestCurrentLocation { [weak self] coordinate in
-            self?.savedHome = coordinate
-            self?.permissionMessage = "Home location saved on this iPhone."
+            self?.saveHome(at: coordinate)
         }
+    }
+    func saveHome(at coordinate: CLLocationCoordinate2D) {
+        savedHome = coordinate
+        permissionMessage = "Home location saved on this iPhone."
     }
     func goHome() {
         guard let savedHome else { permissionMessage = "Save your home location before asking for directions home."; return }
@@ -170,10 +173,10 @@ struct RoutePoint: Codable, Identifiable {
         location.start { [weak self] authorized in
             guard let self else { return }
             if !authorized {
-                self.permissionMessage = "Google Maps will open. Allow location access to record this walk in Drishti."
+                self.permissionMessage = "Apple Maps will open. Allow location access to record this walk in Drishti."
             }
             MapsLink.open(coordinate: savedHome) { opened in
-                if !opened { self.permissionMessage = "Could not open Google Maps. Check your internet connection and try again." }
+                if !opened { self.permissionMessage = "Could not open Apple Maps. Check your internet connection and try again." }
             }
         }
     }
@@ -326,7 +329,7 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
         wantsUpdates = true
         pendingStart = completion
         switch manager.authorizationStatus {
-        case .notDetermined: manager.requestAlwaysAuthorization()
+        case .notDetermined: manager.requestWhenInUseAuthorization()
         case .authorizedAlways:
             beginUpdates(always: true)
         case .authorizedWhenInUse:
@@ -342,7 +345,7 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
             manager.pausesLocationUpdatesAutomatically = false
             manager.showsBackgroundLocationIndicator = true
         } else {
-            onIssue?("Path recording works while Drishti is open. Set Location to Always to keep recording when Google Maps is open.")
+            onIssue?("Path recording works while Drishti is open. Set Location to Always to keep recording when Apple Maps is open.")
         }
         manager.startUpdatingLocation()
         finishStart(true)
@@ -418,8 +421,15 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
 
 enum MapsLink {
     static func open(destination: String, completion: ((Bool) -> Void)? = nil) {
-        guard var components = URLComponents(string: "https://www.google.com/maps/dir/") else { completion?(false); return }
-        components.queryItems = [URLQueryItem(name: "api", value: "1"), URLQueryItem(name: "destination", value: destination), URLQueryItem(name: "travelmode", value: "walking"), URLQueryItem(name: "dir_action", value: "navigate")]
+        let base: String
+        if #available(iOS 18.4, *) { base = "https://maps.apple.com/directions" }
+        else { base = "https://maps.apple.com/" }
+        guard var components = URLComponents(string: base) else { completion?(false); return }
+        if #available(iOS 18.4, *) {
+            components.queryItems = [URLQueryItem(name: "destination", value: destination), URLQueryItem(name: "mode", value: "walking")]
+        } else {
+            components.queryItems = [URLQueryItem(name: "daddr", value: destination), URLQueryItem(name: "dirflg", value: "w")]
+        }
         guard let url = components.url else { completion?(false); return }
         UIApplication.shared.open(url, options: [:]) { opened in
             DispatchQueue.main.async { completion?(opened) }

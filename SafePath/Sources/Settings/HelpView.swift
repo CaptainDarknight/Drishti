@@ -9,7 +9,7 @@ struct HelpView: View {
                     Label("Allow camera access for obstacle awareness.", systemImage: "camera")
                     Label("Allow location access while using Drishti to record a trip.", systemImage: "location")
                     Label("Allow Motion & Fitness access to show step totals.", systemImage: "figure.walk")
-                    Label("Enter a destination and open the walking route in Google Maps.", systemImage: "map")
+                    Label("Enter a destination and open its walking route in Apple Maps.", systemImage: "map")
                     Label("Save your home location before using Take me home.", systemImage: "house")
                 }
                 Section("Huawei Watch Fit 2") {
@@ -25,7 +25,10 @@ struct HelpView: View {
                     Text("Obstacle awareness uses the rear camera while the full-screen camera view is open. iOS pauses camera analysis when Drishti is backgrounded; GPS route recording can continue with Always location access. Keep the phone unlocked while using obstacle awareness.")
                 }
                 Section("Route path") {
-                    Text("Google Maps receives your destination and provides its own walking directions. Drishti records GPS breadcrumbs while location access is available and adds detected obstacle notes. Obstacle voice cues can say left, ahead, or right. Drishti does not provide live turn-by-turn route instructions.")
+                    Text("Apple Maps receives your destination and provides walking directions. Drishti records GPS breadcrumbs while location access is available, counts steps, and adds detected obstacle notes. Obstacle voice cues can say left, ahead, or right. Drishti does not provide live turn-by-turn route instructions.")
+                }
+                Section("About") {
+                    Text("Drishti · Developed by Agraj")
                 }
             }.navigationTitle("Help & settings").navigationBarTitleDisplayMode(.inline)
         }
