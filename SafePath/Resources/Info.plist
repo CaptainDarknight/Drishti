@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleDisplayName</key><string>Drishit</string>
+  <key>UIAppFonts</key><array><string>Inter-Variable.ttf</string></array>
+  <key>NSCameraUsageDescription</key><string>Drishit uses the camera for obstacle awareness while you walk.</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>Drishit uses your location to record your walking route and save your home location.</string>
+  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key><string>Drishit records your route while Google Maps is open during an active walk.</string>
+  <key>NSLocationAlwaysUsageDescription</key><string>Drishit records your route while Google Maps is open during an active walk.</string>
+  <key>NSMicrophoneUsageDescription</key><string>Drishit listens briefly when you choose Speak destination.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Drishit turns your spoken destination into text so you can start a walking route.</string>
+  <key>UIBackgroundModes</key><array><string>location</string></array>
+  <key>UILaunchScreen</key><dict/>
+</dict></plist>
