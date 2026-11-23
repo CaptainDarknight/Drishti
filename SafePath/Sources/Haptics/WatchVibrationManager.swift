@@ -1,5 +1,6 @@
 import Foundation
 import UserNotifications
+import UIKit
 import OSLog
 
 final class WatchVibrationManager: NSObject, UNUserNotificationCenterDelegate {
@@ -16,22 +17,39 @@ final class WatchVibrationManager: NSObject, UNUserNotificationCenterDelegate {
             DispatchQueue.main.async { completion?(granted) }
         }
     }
-    func update(distanceMeters: Double?) {
+    func update(distanceMeters: Double?, apparentSize: CGFloat = 0) {
+        let wasInactive = interval == nil
         let next: TimeInterval?
-        if let distanceMeters, distanceMeters < 1 { next = 1 } // iOS local-notification triggers are at least one second.
+        if let distanceMeters, distanceMeters < 1 { next = 0.65 }
         else if let distanceMeters, distanceMeters <= 2 { next = 1 }
         else if let distanceMeters, distanceMeters <= 3 { next = 2 }
+        else if apparentSize >= 0.28 { next = 0.7 }
+        else if apparentSize >= 0.16 { next = 1.4 }
+        else if apparentSize > 0 { next = 2.5 }
         else { next = nil }
         guard interval != next else { return }
         interval = next
         timer?.cancel(); timer = nil
         guard let next else { return }
+        if wasInactive { schedulePulse(test: false) }
         let source = DispatchSource.makeTimerSource(queue: .main)
         source.schedule(deadline: .now() + next, repeating: next)
-        source.setEventHandler { [weak self] in self?.schedulePulse(test: false) }
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            if UIApplication.shared.applicationState == .active {
+                let feedback = UIImpactFeedbackGenerator(style: .heavy)
+                feedback.prepare()
+                feedback.impactOccurred(intensity: 1)
+            }
+        }
         timer = source; source.resume()
     }
-    func sendTestPulse() { schedulePulse(test: true) }
+    func sendTestPulse() {
+        let feedback = UIImpactFeedbackGenerator(style: .heavy)
+        feedback.prepare()
+        feedback.impactOccurred(intensity: 1)
+        schedulePulse(test: true)
+    }
     private func schedulePulse(test: Bool) {
         guard authorized else { return }
         center.getPendingNotificationRequests { [weak self] requests in
@@ -40,7 +58,7 @@ final class WatchVibrationManager: NSObject, UNUserNotificationCenterDelegate {
             if !test && !active.isEmpty { return } // Keep no more than one pulse pending.
             self.center.removePendingNotificationRequests(withIdentifiers: active)
             let content = UNMutableNotificationContent()
-            content.title = test ? "Drishit test pulse" : "Drishit obstacle alert"
+            content.title = test ? "Drishti test pulse" : "Drishti obstacle alert"
             content.body = test ? "If notifications are mirrored, your watch may vibrate." : "Obstacle nearby. Check your path."
             content.sound = .default
             if #available(iOS 15.0, *) { content.interruptionLevel = .active }
@@ -52,6 +70,6 @@ final class WatchVibrationManager: NSObject, UNUserNotificationCenterDelegate {
         }
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
+        completionHandler([.banner])
     }
 }

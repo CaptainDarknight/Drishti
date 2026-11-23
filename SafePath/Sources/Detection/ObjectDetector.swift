@@ -29,7 +29,7 @@ final class ObjectDetector {
             model = visionModel
             logger.info("Optional YOLOv8n model loaded")
         } else {
-            logger.info("YOLOv8n absent; using Vision rectangle fallback")
+            logger.info("YOLOv8n absent; using Vision boxes with on-device Vision classification")
         }
     }
     func process(pixelBuffer: CVPixelBuffer) {
@@ -59,7 +59,24 @@ final class ObjectDetector {
             if let recognized = request.results as? [VNRecognizedObjectObservation] {
                 objects = recognized.map { ObjectCandidate(label: $0.labels.first?.identifier ?? "Object", box: $0.boundingBox, confidence: $0.labels.first?.confidence ?? $0.confidence) }
             } else {
-                objects = ((request.results as? [VNRectangleObservation]) ?? []).map { ObjectCandidate(label: "Possible obstacle", box: $0.boundingBox, confidence: $0.confidence) }
+                let rectangles = ((request.results as? [VNRectangleObservation]) ?? []).filter { $0.confidence >= 0.55 }
+                // Vision's built-in image classifier supplies semantic labels for detected regions
+                // when no dedicated object-detection model is bundled with the app.
+                let classificationRequests: [VNClassifyImageRequest] = rectangles.prefix(5).map { rectangle in
+                    let classification = VNClassifyImageRequest()
+                    classification.regionOfInterest = rectangle.boundingBox
+                    return classification
+                }
+                if !classificationRequests.isEmpty {
+                    do { try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform(classificationRequests) }
+                    catch { self.logger.debug("Region classification unavailable: \(error.localizedDescription, privacy: .public)") }
+                }
+                objects = rectangles.enumerated().map { index, rectangle in
+                    let classification = classificationRequests.indices.contains(index) ? classificationRequests[index].results?.first : nil
+                    let hasUsefulLabel = classification.map { $0.confidence >= 0.18 } ?? false
+                    let label = hasUsefulLabel ? classification!.identifier.replacingOccurrences(of: "_", with: " ").capitalized : "Possible obstacle"
+                    return ObjectCandidate(label: label, box: rectangle.boundingBox, confidence: hasUsefulLabel ? classification!.confidence : rectangle.confidence)
+                }
             }
             self.onResult?(objects)
         }

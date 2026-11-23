@@ -9,6 +9,12 @@ final class VoiceGuide {
         utterance.rate = 0.47; utterance.pitchMultiplier = 1; utterance.volume = 1
         synthesizer.speak(utterance)
     }
+    func speakUnknown(direction: String) {
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+        let utterance = AVSpeechUtterance(string: "Possible obstacle on your \(direction.lowercased()). Distance unknown.")
+        utterance.rate = 0.47; utterance.pitchMultiplier = 1; utterance.volume = 1
+        synthesizer.speak(utterance)
+    }
     func clearPath() {
         guard !synthesizer.isSpeaking else { return }
         let utterance = AVSpeechUtterance(string: "Path clear."); utterance.rate = 0.47; synthesizer.speak(utterance)

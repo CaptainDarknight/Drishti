@@ -70,7 +70,11 @@ struct RoutePoint: Codable, Identifiable {
         location.onIssue = { [weak self] message in self?.permissionMessage = message }
         camera.onDetections = { [weak self] objects in self?.consume(objects) }
         speechInput.onText = { [weak self] text in self?.destination = text }
-        speechInput.onError = { [weak self] text in self?.permissionMessage = text; self?.isListeningForDestination = false }
+        speechInput.onError = { [weak self] text in
+            self?.permissionMessage = text
+            self?.isListeningForDestination = false
+            self?.audio.configure()
+        }
         speechInput.onFinish = { [weak self] in self?.isListeningForDestination = false; self?.audio.configure() }
         audio.onInterruption = { [weak self] interrupted in
             guard let self else { return }
@@ -99,7 +103,7 @@ struct RoutePoint: Codable, Identifiable {
         guard !query.isEmpty else { permissionMessage = "Enter a destination first."; return }
         let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
         if ["home", "go home", "take me home", "take me to home", "navigate home"].contains(normalized) {
-            guard savedHome != nil else { permissionMessage = "Save your home location before asking Drishit to take you home."; return }
+            guard savedHome != nil else { permissionMessage = "Save your home location before asking Drishti to take you home."; return }
             goHome(); return
         }
         var destinationQuery = query
@@ -108,17 +112,23 @@ struct RoutePoint: Codable, Identifiable {
             break
         }
         if destinationQuery.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == "home" {
-            guard savedHome != nil else { permissionMessage = "Save your home location before asking Drishit to take you home."; return }
+            guard savedHome != nil else { permissionMessage = "Save your home location before asking Drishti to take you home."; return }
             goHome(); return
         }
         guard !destinationQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             permissionMessage = "Say or type a place name, such as “Take me to the library.”"; return
         }
         location.start { [weak self] authorized in
-            guard let self, authorized else { return }
-            if !self.isTripActive { self.beginNewTrip() }
-            self.isTripActive = true
-            MapsLink.open(destination: destinationQuery)
+            guard let self else { return }
+            if authorized {
+                if !self.isTripActive { self.beginNewTrip() }
+                self.isTripActive = true
+            } else {
+                self.permissionMessage = "Google Maps will open. Allow location access to record this walk in Drishti."
+            }
+            MapsLink.open(destination: destinationQuery) { opened in
+                if !opened { self.permissionMessage = "Could not open Google Maps. Check your internet connection and try again." }
+            }
         }
     }
     func stopTrip() { isTripActive = false; location.stop() }
@@ -132,16 +142,22 @@ struct RoutePoint: Codable, Identifiable {
     func goHome() {
         guard let savedHome else { permissionMessage = "Save your home location before asking for directions home."; return }
         location.start { [weak self] authorized in
-            guard let self, authorized else { return }
-            if !self.isTripActive { self.beginNewTrip() }
-            self.isTripActive = true
-            MapsLink.open(coordinate: savedHome)
+            guard let self else { return }
+            if authorized {
+                if !self.isTripActive { self.beginNewTrip() }
+                self.isTripActive = true
+            } else {
+                self.permissionMessage = "Google Maps will open. Allow location access to record this walk in Drishti."
+            }
+            MapsLink.open(coordinate: savedHome) { opened in
+                if !opened { self.permissionMessage = "Could not open Google Maps. Check your internet connection and try again." }
+            }
         }
     }
     func testPulse() { alerts.sendTestPulse() }
     func enableNotifications() {
         alerts.requestPermission { [weak self] granted in
-            self?.permissionMessage = granted ? "Notifications enabled. Huawei Health may mirror them to your watch." : "Notifications are off. Enable Drishit in iPhone Settings → Notifications to use watch mirroring."
+            self?.permissionMessage = granted ? "Notifications enabled. Your watch may mirror Drishti alerts." : "Notifications are off. Allow Drishti notifications in Settings to use watch mirroring."
         }
     }
     func toggleVoiceDestination() {
@@ -162,13 +178,33 @@ struct RoutePoint: Codable, Identifiable {
 
     private func consume(_ objects: [DetectedObject]) {
         detections = objects
-        guard let closest = objects.filter({ $0.distanceMeters != nil }).min(by: { $0.distanceMeters! < $1.distanceMeters! }) else {
-            latestObstacle = objects.isEmpty ? "Path clear" : "Object ahead"
-            distanceText = "Distance unavailable"
+        guard !objects.isEmpty else {
+            latestObstacle = "Path clear"
+            distanceText = "No object detected"
             if vibrationEnabled { alerts.update(distanceMeters: nil) }
             return
         }
-        let distance = closest.distanceMeters!
+        let closestWithDepth = objects.compactMap { object -> (DetectedObject, Double)? in
+            guard let distance = object.distanceMeters, distance.isFinite, distance > 0 else { return nil }
+            return (object, distance)
+        }.min { $0.1 < $1.1 }
+        guard let (closest, distance) = closestWithDepth else {
+            guard let likelyNearest = objects.max(by: { $0.box.height < $1.box.height }) else { return }
+            direction = likelyNearest.horizontalPosition < 0.38 ? "Left" : (likelyNearest.horizontalPosition > 0.62 ? "Right" : "Ahead")
+            latestObstacle = likelyNearest.label
+            distanceText = "Distance unavailable"
+            if vibrationEnabled { alerts.update(distanceMeters: nil, apparentSize: likelyNearest.box.height) }
+            if isTripActive, let coordinate = location.lastCoordinate,
+               Date().timeIntervalSince(lastDetectionNote) > 8 || lastNotedObject != likelyNearest.label {
+                appendRoutePoint(RoutePoint(coordinate, tripID: currentTripID, event: likelyNearest.label))
+                lastDetectionNote = .now; lastNotedObject = likelyNearest.label
+            }
+            if voiceEnabled && audioStatus == nil && Date().timeIntervalSince(lastVoice) > 3 {
+                voice.speakUnknown(direction: direction)
+                lastVoice = .now
+            }
+            return
+        }
         direction = closest.horizontalPosition < 0.38 ? "Left" : (closest.horizontalPosition > 0.62 ? "Right" : "Ahead")
         latestObstacle = distance < 1 ? "Object very close" : "Object ahead"
         distanceText = String(format: "%.1f meters", distance)
@@ -244,7 +280,7 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
             manager.pausesLocationUpdatesAutomatically = false
             manager.showsBackgroundLocationIndicator = true
         } else {
-            onIssue?("Path recording works while Drishit is open. Set Location to Always to keep recording when Google Maps is open.")
+            onIssue?("Path recording works while Drishti is open. Set Location to Always to keep recording when Google Maps is open.")
         }
         manager.startUpdatingLocation()
         finishStart(true)
@@ -284,13 +320,16 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
 }
 
 enum MapsLink {
-    static func open(destination: String) {
-        guard var components = URLComponents(string: "https://www.google.com/maps/dir/") else { return }
-        components.queryItems = [URLQueryItem(name: "api", value: "1"), URLQueryItem(name: "destination", value: destination), URLQueryItem(name: "travelmode", value: "walking")]
-        if let url = components.url { UIApplication.shared.open(url) }
+    static func open(destination: String, completion: ((Bool) -> Void)? = nil) {
+        guard var components = URLComponents(string: "https://www.google.com/maps/dir/") else { completion?(false); return }
+        components.queryItems = [URLQueryItem(name: "api", value: "1"), URLQueryItem(name: "destination", value: destination), URLQueryItem(name: "travelmode", value: "walking"), URLQueryItem(name: "dir_action", value: "navigate")]
+        guard let url = components.url else { completion?(false); return }
+        UIApplication.shared.open(url, options: [:]) { opened in
+            DispatchQueue.main.async { completion?(opened) }
+        }
     }
-    static func open(coordinate: CLLocationCoordinate2D) {
-        open(destination: "\(coordinate.latitude),\(coordinate.longitude)")
+    static func open(coordinate: CLLocationCoordinate2D, completion: ((Bool) -> Void)? = nil) {
+        open(destination: "\(coordinate.latitude),\(coordinate.longitude)", completion: completion)
     }
 }
 

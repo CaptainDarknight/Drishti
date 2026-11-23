@@ -11,20 +11,38 @@ final class SpeechRecognitionManager {
     var onError: ((String) -> Void)?
     var onFinish: (() -> Void)?
     private var isActive = false
+    private var isStarting = false
+    private var tapInstalled = false
+    private var startGeneration = 0
 
     func start() {
-        guard !isActive else { stop(); return }
+        guard !isActive && !isStarting else { stop(); return }
+        isStarting = true
+        startGeneration += 1
+        let generation = startGeneration
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            guard let self else { return }
-            guard status == .authorized else { DispatchQueue.main.async { self.onError?("Enable speech recognition in Settings to speak a destination.") }; return }
-            AVAudioSession.sharedInstance().requestRecordPermission { granted in
-                guard granted else { DispatchQueue.main.async { self.onError?("Enable microphone access in Settings to speak a destination.") }; return }
-                DispatchQueue.main.async { self.beginRecording() }
+            DispatchQueue.main.async {
+                guard let self, self.startGeneration == generation else { return }
+                guard status == .authorized else {
+                    self.fail("Enable speech recognition in Settings to speak a destination.")
+                    return
+                }
+                AVAudioSession.sharedInstance().requestRecordPermission { granted in
+                    DispatchQueue.main.async {
+                        guard self.startGeneration == generation else { return }
+                        guard granted else {
+                            self.fail("Enable microphone access in Settings to speak a destination.")
+                            return
+                        }
+                        self.beginRecording(generation: generation)
+                    }
+                }
             }
         }
     }
-    private func beginRecording() {
-        guard let recognizer, recognizer.isAvailable else { onError?("Speech recognition is temporarily unavailable."); return }
+    private func beginRecording(generation: Int) {
+        guard isStarting, generation == startGeneration else { return }
+        guard let recognizer, recognizer.isAvailable else { fail("Speech recognition is temporarily unavailable."); return }
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
@@ -33,28 +51,43 @@ final class SpeechRecognitionManager {
             request.shouldReportPartialResults = true
             self.request = request
             let input = engine.inputNode
-            input.removeTap(onBus: 0)
             input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in request.append(buffer) }
-            engine.prepare(); try engine.start(); isActive = true
+            tapInstalled = true
+            engine.prepare(); try engine.start(); isActive = true; isStarting = false
             task = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 guard let self else { return }
                 if let result {
                     let text = result.bestTranscription.formattedString
                     DispatchQueue.main.async { self.onText?(text) }
-                    if result.isFinal { self.stop() }
+                    if result.isFinal { DispatchQueue.main.async { self.stop() } }
                 }
-                if error != nil { self.stop() }
+                if error != nil { DispatchQueue.main.async { self.stop() } }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in self?.stop() }
-        } catch { onError?("Could not start voice input. Check microphone access and try again.") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+                guard let self, self.startGeneration == generation, self.isActive else { return }
+                self.stop()
+            }
+        } catch { fail("Could not start voice input. Check microphone access and try again.") }
     }
     func stop() {
-        guard isActive else { return }
+        guard isActive || isStarting else { return }
+        startGeneration += 1
         isActive = false
-        engine.stop(); engine.inputNode.removeTap(onBus: 0)
+        isStarting = false
+        if engine.isRunning { engine.stop() }
+        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
         request?.endAudio(); task?.cancel()
         request = nil; task = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         DispatchQueue.main.async { self.onFinish?() }
+    }
+    private func fail(_ message: String) {
+        startGeneration += 1
+        if engine.isRunning { engine.stop() }
+        if tapInstalled { engine.inputNode.removeTap(onBus: 0); tapInstalled = false }
+        request?.endAudio(); task?.cancel(); request = nil; task = nil
+        isActive = false; isStarting = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        onError?(message)
     }
 }

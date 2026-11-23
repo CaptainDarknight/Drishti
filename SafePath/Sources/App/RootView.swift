@@ -1,14 +1,16 @@
 import SwiftUI
+import AVKit
 
 enum AppTypography {
     static let fontName = "Inter-Regular"
 }
 
 private enum SafePalette {
-    static let canvas = Color(red: 0.94, green: 0.96, blue: 0.98)
-    static let ink = Color(red: 0.08, green: 0.12, blue: 0.19)
-    static let muted = Color(red: 0.36, green: 0.42, blue: 0.49)
-    static let blue = Color(red: 0.27, green: 0.34, blue: 0.83)
+    static let canvas = Color.white
+    static let ink = Color(red: 0.08, green: 0.09, blue: 0.11)
+    static let muted = Color(red: 0.29, green: 0.31, blue: 0.34)
+    static let blue = Color(red: 0.13, green: 0.15, blue: 0.19)
+    static let surface = Color(red: 0.95, green: 0.96, blue: 0.97)
     static let mint = Color(red: 0.28, green: 0.73, blue: 0.63)
     static let orange = Color(red: 0.95, green: 0.60, blue: 0.28)
 }
@@ -20,6 +22,7 @@ struct RootView: View {
     @State private var showingCamera = false
     @State private var selectedTab = 0
     @State private var showingNotificationIntro = false
+    @State private var showingConnections = false
 
     var body: some View {
         ZStack {
@@ -31,9 +34,9 @@ struct RootView: View {
                         if selectedTab == 0 { planner } else { tripOverview }
                         if let message = state.audioStatus { messageBanner(message) }
                         if let message = state.permissionMessage { messageBanner(message) }
-                        Text("Drishit is an assistive tool. Keep using your usual mobility aid.")
+                        Text("Drishti is an assistive tool. Keep using your usual mobility aid.")
                             .font(.custom(AppTypography.fontName, size: 13, relativeTo: .footnote)).foregroundStyle(SafePalette.muted).fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 3).accessibilityLabel("Safety reminder. Drishit is an assistive tool. Continue using your usual mobility aid.")
+                            .padding(.horizontal, 3).accessibilityLabel("Safety reminder. Drishti is an assistive tool. Continue using your usual mobility aid.")
                     }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
                 }
                 bottomBar
@@ -42,22 +45,27 @@ struct RootView: View {
         .font(.custom(AppTypography.fontName, size: 17, relativeTo: .body))
         .preferredColorScheme(.light)
         .sheet(isPresented: $showingHelp) { HelpView().environmentObject(state) }
+        .sheet(isPresented: $showingConnections) { DeviceConnectionsView().environmentObject(state) }
         .fullScreenCover(isPresented: $showingCamera, onDismiss: { state.stopCamera() }) { cameraScreen }
         .alert("Enable safety alerts?", isPresented: $showingNotificationIntro) {
             Button("Enable notifications") { state.enableNotifications() }
             Button("Not now", role: .cancel) { }
         } message: {
-            Text("Drishit can send obstacle alerts to iPhone notifications. Huawei Health may mirror them to a paired watch when notification access is enabled.")
+            Text("Drishti can send obstacle alerts to iPhone notifications. Huawei Health may mirror them to a paired watch when notification access is enabled.")
         }
         .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = state.isCameraActive
             if !UserDefaults.standard.bool(forKey: "SafePath.notificationIntroShown") {
                 UserDefaults.standard.set(true, forKey: "SafePath.notificationIntroShown")
                 showingNotificationIntro = true
             }
         }
         .onChange(of: scenePhase) { phase in
-            if phase != .active { state.appDidEnterBackground() }
-            else if showingCamera { state.startCamera() }
+            if phase != .active { state.appDidEnterBackground(); UIApplication.shared.isIdleTimerDisabled = false }
+            else if showingCamera { state.startCamera(); UIApplication.shared.isIdleTimerDisabled = true }
+        }
+        .onChange(of: state.isCameraActive) { active in
+            UIApplication.shared.isIdleTimerDisabled = active && scenePhase == .active
         }
     }
 
@@ -68,10 +76,15 @@ struct RootView: View {
                 Image(systemName: "figure.walk").font(.system(size: 22, weight: .bold)).foregroundStyle(SafePalette.blue)
             }.accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
-                Text(greeting).scaledFont(size: 14, weight: .medium).foregroundStyle(SafePalette.muted)
-                Text("Drishit").scaledFont(size: 21, weight: .bold).foregroundStyle(SafePalette.ink)
-            }
+                Text("Drishti").scaledFont(size: 23, weight: .heavy).foregroundStyle(SafePalette.ink)
+                Text(greeting).scaledFont(size: 13, weight: .medium).foregroundStyle(SafePalette.muted)
+            }.onTapGesture(count: 3) { showingCamera = true; state.startCamera() }
+                .accessibilityHint("Triple tap to start obstacle awareness while Drishti is open.")
             Spacer()
+            Button { showingConnections = true } label: {
+                Image(systemName: "earbuds").font(.system(size: 18, weight: .semibold)).foregroundStyle(SafePalette.ink)
+                    .frame(width: 46, height: 46).background(SafePalette.surface, in: Circle())
+            }.accessibilityLabel("Connect earbuds or set up a watch")
             Button { showingHelp = true } label: {
                 Image(systemName: "slider.horizontal.3").font(.system(size: 18, weight: .semibold)).foregroundStyle(SafePalette.ink)
                     .frame(width: 48, height: 48).background(.white, in: Circle())
@@ -100,7 +113,7 @@ struct RootView: View {
                     Label("Save home", systemImage: "house.fill").frame(maxWidth: .infinity).frame(minHeight: 60)
                 }.buttonStyle(SoftButtonStyle(color: SafePalette.blue))
                 Button { state.goHome() } label: {
-                    Label("Take me home", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity).frame(minHeight: 60)
+                    Label("Go home", systemImage: "arrow.uturn.backward").frame(maxWidth: .infinity).frame(minHeight: 60)
                 }.buttonStyle(FilledButtonStyle(color: SafePalette.mint)).disabled(state.savedHome == nil).opacity(state.savedHome == nil ? 0.55 : 1)
             }
         }.padding(19).background(.white, in: RoundedRectangle(cornerRadius: 25)).shadow(color: .black.opacity(0.035), radius: 14, y: 5)
@@ -117,7 +130,7 @@ struct RootView: View {
                     .frame(width: 46, height: 46)
             }.accessibilityLabel(state.isListeningForDestination ? "Stop listening for destination" : "Speak destination")
                 .accessibilityHint("Uses speech recognition to fill in the destination field.")
-        }.padding(.horizontal, 15).frame(minHeight: 60).background(SafePalette.canvas, in: RoundedRectangle(cornerRadius: 15))
+        }.padding(.horizontal, 15).frame(minHeight: 60).background(SafePalette.surface, in: RoundedRectangle(cornerRadius: 15))
     }
 
     private var tripOverview: some View {
@@ -135,6 +148,17 @@ struct RootView: View {
                 metric("Obstacle notes", value: "\(state.currentTripObstacleCount)", icon: "viewfinder", tint: SafePalette.orange)
             }
             awarenessSummary
+            Button { showingConnections = true } label: {
+                HStack(spacing: 13) {
+                    Image(systemName: "earbuds").font(.system(size: 19, weight: .bold))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Audio & watch setup").scaledFont(size: 16, weight: .bold)
+                        Text("Hear spoken direction cues · configure watch alerts").scaledFont(size: 12, weight: .medium).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 13, weight: .bold))
+                }.foregroundStyle(SafePalette.ink).padding(14).background(SafePalette.surface, in: RoundedRectangle(cornerRadius: 17))
+            }.buttonStyle(.plain)
             HStack(spacing: 10) {
                 Button { showingCamera = true; state.startCamera() } label: {
                     Label("Obstacle awareness", systemImage: "viewfinder").frame(maxWidth: .infinity).frame(minHeight: 62)
@@ -179,8 +203,8 @@ struct RootView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 0) {
-            tabButton("Plan", icon: "sparkles", index: 0)
-            tabButton("My walk", icon: "chart.bar.fill", index: 1)
+            tabButton("Home", icon: "house.fill", index: 0)
+            tabButton("My walks", icon: "eye.fill", index: 1)
         }.padding(.top, 10).padding(.bottom, 7).background(.white.shadow(.drop(color: .black.opacity(0.06), radius: 8, y: -3)))
     }
     private func tabButton(_ title: String, icon: String, index: Int) -> some View {
@@ -231,7 +255,10 @@ struct RootView: View {
                         .accessibilityLabel("Test watch notification pulse")
                 }.foregroundStyle(.white).padding(17).background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 22)).padding(18)
             }
-        }.background(.black).preferredColorScheme(.dark).onDisappear { state.restoreBrightness() }
+        }.background(.black).preferredColorScheme(.dark).onDisappear {
+            state.restoreBrightness()
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
     }
 }
 
@@ -239,6 +266,7 @@ private struct FilledButtonStyle: ButtonStyle {
     var color: Color
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.scaledFont(size: 17, weight: .bold).foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.72)
             .background(color.opacity(configuration.isPressed ? 0.78 : 1), in: RoundedRectangle(cornerRadius: 17))
     }
 }
@@ -246,6 +274,7 @@ private struct SoftButtonStyle: ButtonStyle {
     var color: Color
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.scaledFont(size: 16, weight: .bold).foregroundStyle(color)
+            .lineLimit(1).minimumScaleFactor(0.72)
             .background(color.opacity(configuration.isPressed ? 0.14 : 0.09), in: RoundedRectangle(cornerRadius: 17))
             .overlay(RoundedRectangle(cornerRadius: 17).stroke(color.opacity(0.16), lineWidth: 1))
     }
@@ -261,6 +290,65 @@ private struct ScaledFontModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.font(.custom(AppTypography.fontName, size: size, relativeTo: .body).weight(weight))
     }
+}
+
+private struct DeviceConnectionsView: View {
+    @EnvironmentObject private var state: AppState
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Earbuds for spoken guidance") {
+                    Text("Connect Bluetooth earbuds in iPhone Settings → Bluetooth. Drishti sends voice prompts to the iPhone’s active audio output and speaks left, ahead, or right when an obstacle is detected.")
+                    AudioOutputPicker().frame(height: 52)
+                    Label("Earbud directions use the phone’s audio route. Drishti does not control earbud buttons, ANC, or transparency.", systemImage: "info.circle")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Huawei Watch Fit 2") {
+                    Label("Watch Fit 2 supports iPhone notifications through Huawei Health. Drishti sends an obstacle notification for the watch to mirror; the iPhone handles the rapid haptic alerts.", systemImage: "applewatch")
+                    Text("1. Pair the watch in Huawei Health: Devices → Add → Watch → HUAWEI WATCH FIT 2. 2. Allow Bluetooth and notifications when iOS asks. 3. In Huawei Health, open the watch under Devices → Notifications and turn on notification sync; enable Drishti if it appears in the app list.")
+                    Button { state.enableNotifications() } label: {
+                        Label("Enable Drishti watch alerts", systemImage: "bell.badge")
+                    }
+                    if let message = state.permissionMessage {
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if let compatibilityURL = URL(string: "https://consumer.huawei.com/en/support/content/en-us15893442/") {
+                        Link("Check Huawei Watch Fit 2 iPhone compatibility", destination: compatibilityURL)
+                    }
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    } label: {
+                        Label("Open Drishti notification settings", systemImage: "gearshape")
+                    }
+                }
+                Section("Other watches") {
+                    Label("Pair each watch in its own companion app. Apple Watch requires a watchOS companion app for direct Drishti features; this project currently sends iPhone notifications for supported notification mirroring.", systemImage: "applewatch")
+                    Text("Notification delivery and vibration depend on the watch, its companion app, iOS permissions, and Bluetooth connection. Drishti cannot universally pair third-party watches or directly control their vibration motors.")
+                    Button {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                    } label: {
+                        Label("Open Drishti notification settings", systemImage: "gearshape")
+                    }
+                }
+                Section("Quick start") {
+                    Label("Triple tap the Drishti title inside the app to start obstacle awareness. iOS reserves the phone’s side button for system functions, so apps cannot detect its triple click.", systemImage: "hand.tap")
+                }
+            }
+            .navigationTitle("Devices & audio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+private struct AudioOutputPicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView(frame: .zero)
+        picker.prioritizesVideoDevices = false
+        return picker
+    }
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) { }
 }
 
 private extension View {
