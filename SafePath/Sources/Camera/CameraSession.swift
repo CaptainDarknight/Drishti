@@ -1,107 +1,138 @@
 import Foundation
-import ARKit
-import Vision
 import AVFoundation
+import Vision
 import Combine
-import simd
 import OSLog
+import CoreVideo
+import CoreMedia
 
-final class CameraSession: NSObject, ObservableObject, ARSessionDelegate {
-    let session = ARSession()
+final class CameraSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    let captureSession = AVCaptureSession()
     private let logger = Logger(subsystem: "com.example.safepath", category: "Camera")
+    private let sessionQueue = DispatchQueue(label: "drishti.camera.session", qos: .userInitiated)
+    private let videoQueue = DispatchQueue(label: "drishti.camera.frames", qos: .userInitiated)
+    private let videoOutput = AVCaptureVideoDataOutput()
     private let detector = ObjectDetector()
+    private var isConfigured = false
+    private var startGeneration = 0
+    private var isStartingOnMain = false
+    private var runningOnMain = false
     var onDetections: (([DetectedObject]) -> Void)?
-    var onPermissionMessage: ((String?) -> Void)?
-    private var latestFrame: ARFrame?
-    private var isRunning = false
 
     override init() {
         super.init()
-        session.delegateQueue = .main
-        session.delegate = self
+        videoOutput.alwaysDiscardsLateVideoFrames = true
+        videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        videoOutput.setSampleBufferDelegate(self, queue: videoQueue)
         detector.onResult = { [weak self] observations in
-            Task { @MainActor in self?.publish(observations) }
+            DispatchQueue.main.async { self?.publish(observations) }
         }
     }
+
     func start(completion: ((String?) -> Void)? = nil) {
-        onPermissionMessage = completion
-        guard ARWorldTrackingConfiguration.isSupported else { logger.error("ARKit world tracking is unsupported"); completion?("AR camera tracking is unavailable on this iPhone."); return }
+        guard !runningOnMain else { completion?(nil); return }
+        guard !isStartingOnMain else { return }
+        isStartingOnMain = true
+        startGeneration += 1
+        let generation = startGeneration
         switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized: runSession()
+        case .authorized:
+            configureAndStart(generation: generation, completion: completion)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                Task { @MainActor in
-                    guard let self else { return }
-                    if granted { self.runSession() } else { self.logger.error("Camera permission denied"); completion?("Camera access is off. Enable it in iPhone Settings.") }
+                DispatchQueue.main.async {
+                    guard let self, self.startGeneration == generation else { return }
+                    guard granted else {
+                        self.isStartingOnMain = false
+                        completion?("Camera access is off. Enable it in iPhone Settings → Drishti → Camera.")
+                        return
+                    }
+                    self.configureAndStart(generation: generation, completion: completion)
                 }
             }
-        default: completion?("Camera access is off. Enable it in iPhone Settings.")
+        default:
+            isStartingOnMain = false
+            completion?("Camera access is off. Enable it in iPhone Settings → Drishti → Camera.")
         }
     }
-    private func runSession() {
-        let configuration = ARWorldTrackingConfiguration()
-        configuration.worldAlignment = .gravity
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) { configuration.frameSemantics.insert(.smoothedSceneDepth) }
-        else if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) { configuration.frameSemantics.insert(.sceneDepth) }
-        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
-        logger.info("AR camera session started; scene depth enabled: \(configuration.frameSemantics.contains(.smoothedSceneDepth) || configuration.frameSemantics.contains(.sceneDepth))")
-        isRunning = true
+
+    private func configureAndStart(generation: Int, completion: ((String?) -> Void)?) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                try self.configureIfNeeded()
+                if !self.captureSession.isRunning { self.captureSession.startRunning() }
+                guard self.captureSession.isRunning else { throw CameraSetupError.startFailed }
+                DispatchQueue.main.async {
+                    guard self.startGeneration == generation else {
+                        self.sessionQueue.async { self.stopSessionOnQueue() }
+                        return
+                    }
+                    self.isStartingOnMain = false
+                    self.runningOnMain = true
+                    self.logger.info("Camera capture session started")
+                    completion?(nil)
+                }
+            } catch {
+                self.logger.error("Could not start camera: \(error.localizedDescription, privacy: .public)")
+                DispatchQueue.main.async {
+                    guard self.startGeneration == generation else { return }
+                    self.isStartingOnMain = false
+                    self.runningOnMain = false
+                    completion?("Drishti could not start the camera. Close other camera apps, check Camera permission, and try again.")
+                }
+            }
+        }
     }
-    func stop() { session.pause(); isRunning = false; logger.info("AR camera session paused") }
-    func session(_ session: ARSession, didFailWithError error: Error) { logger.error("AR session failed: \(error.localizedDescription, privacy: .public)") }
-    func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        latestFrame = frame
-        detector.process(pixelBuffer: frame.capturedImage)
+
+    private func configureIfNeeded() throws {
+        guard !isConfigured else { return }
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
+            throw CameraSetupError.noRearCamera
+        }
+        let input = try AVCaptureDeviceInput(device: device)
+        captureSession.beginConfiguration()
+        defer { captureSession.commitConfiguration() }
+        captureSession.sessionPreset = .high
+        guard captureSession.canAddInput(input) else { throw CameraSetupError.cannotAddInput }
+        captureSession.addInput(input)
+        guard captureSession.canAddOutput(videoOutput) else {
+            captureSession.removeInput(input)
+            throw CameraSetupError.cannotAddOutput
+        }
+        captureSession.addOutput(videoOutput)
+        isConfigured = true
     }
+
+    func stop() {
+        startGeneration += 1
+        isStartingOnMain = false
+        runningOnMain = false
+        sessionQueue.async { [weak self] in self?.stopSessionOnQueue() }
+    }
+
+    private func stopSessionOnQueue() {
+        if captureSession.isRunning { captureSession.stopRunning() }
+        logger.info("Camera capture session stopped")
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        detector.process(pixelBuffer: pixelBuffer)
+    }
+
     private func publish(_ observations: [ObjectCandidate]) {
-        guard isRunning else { return }
-        let frame = latestFrame
-        let objects = observations.map { observation -> DetectedObject in
-            let label = observation.label
-            let confidence = observation.confidence
-            // Vision boxes use a bottom-left origin in the oriented image. For the rear camera's
-            // portrait presentation, the center is mapped back into the landscape depth buffer.
-            let x = observation.box.midX
-            let y = observation.box.midY
-            let depth = frame.flatMap { sampleDepth(frame: $0, visionX: x, visionY: y) }
-            return DetectedObject(label: label, box: observation.box, confidence: confidence, distanceMeters: depth)
+        guard runningOnMain else { return }
+        let objects = observations.map { observation in
+            DetectedObject(label: observation.label, box: observation.box, confidence: observation.confidence, distanceMeters: nil)
         }
         onDetections?(objects)
     }
-    private func sampleDepth(frame: ARFrame, visionX: CGFloat, visionY: CGFloat) -> Double? {
-        guard let map = frame.smoothedSceneDepth?.depthMap ?? frame.sceneDepth?.depthMap else {
-            // ARKit estimated-plane raycasting uses tracked feature points on devices without LiDAR.
-            // If it cannot find a reliable hit, the UI reports that distance is unavailable.
-            let resolution = frame.camera.imageResolution
-            let viewportPoint = CGPoint(x: visionX * CGFloat(resolution.height), y: (1 - visionY) * CGFloat(resolution.width))
-            let query = frame.raycastQuery(from: viewportPoint, allowing: .estimatedPlane, alignment: .any)
-            guard let result = session.raycast(query).first else { return nil }
-            let cameraPosition = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
-            let hitPosition = SIMD3<Float>(result.worldTransform.columns.3.x, result.worldTransform.columns.3.y, result.worldTransform.columns.3.z)
-            let meters = simd_distance(cameraPosition, hitPosition)
-            return meters.isFinite && meters > 0 ? Double(meters) : nil
-        }
-        CVPixelBufferLockBaseAddress(map, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
-        let width = CVPixelBufferGetWidth(map), height = CVPixelBufferGetHeight(map)
-        guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
-        let rowBytes = CVPixelBufferGetBytesPerRow(map)
-        let floats = base.assumingMemoryBound(to: UInt8.self)
-        // Portrait Vision x/y correspond approximately to the rotated raw sensor y/(1-x).
-        let px = min(width - 1, max(0, Int(visionY * CGFloat(width))))
-        let py = min(height - 1, max(0, Int((1 - visionX) * CGFloat(height))))
-        var samples: [Double] = []
-        for dy in -2...2 {
-            for dx in -2...2 {
-                let sx = px + dx, sy = py + dy
-                guard sx >= 0, sx < width, sy >= 0, sy < height else { continue }
-                let pointer = floats.advanced(by: sy * rowBytes + sx * MemoryLayout<Float32>.size)
-                let value = pointer.withMemoryRebound(to: Float32.self, capacity: 1) { Double($0.pointee) }
-                if value.isFinite && value > 0 { samples.append(value) }
-            }
-        }
-        guard !samples.isEmpty else { return nil }
-        samples.sort()
-        return samples[samples.count / 2]
-    }
+}
+
+private enum CameraSetupError: Error {
+    case noRearCamera
+    case cannotAddInput
+    case cannotAddOutput
+    case startFailed
 }

@@ -21,7 +21,6 @@ struct RootView: View {
     @State private var showingHelp = false
     @State private var showingCamera = false
     @State private var selectedTab = 0
-    @State private var showingNotificationIntro = false
     @State private var showingConnections = false
 
     var body: some View {
@@ -47,18 +46,8 @@ struct RootView: View {
         .sheet(isPresented: $showingHelp) { HelpView().environmentObject(state) }
         .sheet(isPresented: $showingConnections) { DeviceConnectionsView().environmentObject(state) }
         .fullScreenCover(isPresented: $showingCamera, onDismiss: { state.stopCamera() }) { cameraScreen }
-        .alert("Enable safety alerts?", isPresented: $showingNotificationIntro) {
-            Button("Enable notifications") { state.enableNotifications() }
-            Button("Not now", role: .cancel) { }
-        } message: {
-            Text("Drishti can send obstacle alerts to iPhone notifications. Huawei Health may mirror them to a paired watch when notification access is enabled.")
-        }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = state.isCameraActive
-            if !UserDefaults.standard.bool(forKey: "SafePath.notificationIntroShown") {
-                UserDefaults.standard.set(true, forKey: "SafePath.notificationIntroShown")
-                showingNotificationIntro = true
-            }
         }
         .onChange(of: scenePhase) { phase in
             if phase != .active { state.appDidEnterBackground(); UIApplication.shared.isIdleTimerDisabled = false }
@@ -78,7 +67,7 @@ struct RootView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Drishti").scaledFont(size: 23, weight: .heavy).foregroundStyle(SafePalette.ink)
                 Text(greeting).scaledFont(size: 13, weight: .medium).foregroundStyle(SafePalette.muted)
-            }.onTapGesture(count: 3) { showingCamera = true; state.startCamera() }
+            }.onTapGesture(count: 3) { showingCamera = true }
                 .accessibilityHint("Triple tap to start obstacle awareness while Drishti is open.")
             Spacer()
             Button { showingConnections = true } label: {
@@ -129,7 +118,7 @@ struct RootView: View {
                     .font(.system(size: 19, weight: .semibold)).foregroundStyle(state.isListeningForDestination ? SafePalette.orange : SafePalette.blue)
                     .frame(width: 46, height: 46)
             }.accessibilityLabel(state.isListeningForDestination ? "Stop listening for destination" : "Speak destination")
-                .accessibilityHint("Uses speech recognition to fill in the destination field.")
+                .accessibilityHint("Say where you want to go. Drishti fills in the destination and opens its walking route when speech recognition finishes.")
         }.padding(.horizontal, 15).frame(minHeight: 60).background(SafePalette.surface, in: RoundedRectangle(cornerRadius: 15))
     }
 
@@ -144,7 +133,7 @@ struct RootView: View {
                 Image(systemName: "figure.walk.circle.fill").font(.system(size: 43)).foregroundStyle(SafePalette.mint).accessibilityHidden(true)
             }
             HStack(spacing: 10) {
-                metric("Recorded points", value: "\(state.breadcrumbs.count)", icon: "mappin.and.ellipse", tint: SafePalette.blue)
+                metric("Steps walked", value: state.pedometerAvailable ? (state.stepCount?.formatted() ?? "—") : "—", icon: "figure.walk", tint: SafePalette.blue)
                 metric("Obstacle notes", value: "\(state.currentTripObstacleCount)", icon: "viewfinder", tint: SafePalette.orange)
             }
             awarenessSummary
@@ -160,7 +149,7 @@ struct RootView: View {
                 }.foregroundStyle(SafePalette.ink).padding(14).background(SafePalette.surface, in: RoundedRectangle(cornerRadius: 17))
             }.buttonStyle(.plain)
             HStack(spacing: 10) {
-                Button { showingCamera = true; state.startCamera() } label: {
+                Button { showingCamera = true } label: {
                     Label("Obstacle awareness", systemImage: "viewfinder").frame(maxWidth: .infinity).frame(minHeight: 62)
                 }.buttonStyle(FilledButtonStyle(color: SafePalette.blue))
                 Button { state.testPulse() } label: {
@@ -223,7 +212,7 @@ struct RootView: View {
     }
     private var cameraScreen: some View {
         ZStack(alignment: .top) {
-            ARCameraView(camera: state.camera).ignoresSafeArea()
+            CameraPreviewView(camera: state.camera).ignoresSafeArea()
             if state.overlayEnabled { DetectionOverlayView(objects: state.detections).ignoresSafeArea() }
             VStack(spacing: 16) {
                 HStack {
@@ -255,7 +244,7 @@ struct RootView: View {
                         .accessibilityLabel("Test watch notification pulse")
                 }.foregroundStyle(.white).padding(17).background(.black.opacity(0.76), in: RoundedRectangle(cornerRadius: 22)).padding(18)
             }
-        }.background(.black).preferredColorScheme(.dark).onDisappear {
+        }.background(.black).preferredColorScheme(.dark).onAppear { state.startCamera() }.onDisappear {
             state.restoreBrightness()
             UIApplication.shared.isIdleTimerDisabled = false
         }

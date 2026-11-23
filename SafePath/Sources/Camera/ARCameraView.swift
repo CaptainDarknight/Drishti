@@ -1,14 +1,34 @@
 import SwiftUI
-import ARKit
+import AVFoundation
+import UIKit
 
-struct ARCameraView: UIViewRepresentable {
+struct CameraPreviewView: UIViewRepresentable {
     @ObservedObject var camera: CameraSession
-    func makeUIView(context: Context) -> ARSCNView {
-        let view = ARSCNView(frame: .zero)
-        view.session = camera.session
-        view.automaticallyUpdatesLighting = false
-        view.backgroundColor = .black
+
+    func makeUIView(context: Context) -> CameraPreviewHostView {
+        let view = CameraPreviewHostView()
+        let preview = AVCaptureVideoPreviewLayer(session: camera.captureSession)
+        preview.videoGravity = .resizeAspectFill
+        if let connection = preview.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        view.previewLayer = preview
+        view.layer.addSublayer(preview)
         return view
     }
-    func updateUIView(_ view: ARSCNView, context: Context) { view.session = camera.session }
+
+    func updateUIView(_ view: CameraPreviewHostView, context: Context) {
+        view.previewLayer?.session = camera.captureSession
+    }
+}
+
+final class CameraPreviewHostView: UIView {
+    var previewLayer: AVCaptureVideoPreviewLayer? {
+        didSet { setNeedsLayout() }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        previewLayer?.frame = bounds
+    }
 }

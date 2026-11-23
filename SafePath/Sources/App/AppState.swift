@@ -2,6 +2,7 @@ import Foundation
 import CoreLocation
 import SwiftUI
 import UIKit
+import CoreMotion
 
 struct RoutePoint: Codable, Identifiable {
     var id = UUID()
@@ -27,6 +28,8 @@ struct RoutePoint: Codable, Identifiable {
     @Published var direction = "Ahead"
     @Published var detections: [DetectedObject] = []
     @Published var breadcrumbs: [RoutePoint] = []
+    @Published var stepCount: Int?
+    @Published var pedometerAvailable = CMPedometer.isStepCountingAvailable()
     @Published var voiceEnabled = true {
         didSet { if !voiceEnabled { voice.pause() } }
     }
@@ -45,6 +48,7 @@ struct RoutePoint: Codable, Identifiable {
         }
     }
     private let location = LocationRecorder()
+    private let pedometer = PedometerRecorder()
     let camera = CameraSession()
     let alerts = WatchVibrationManager()
     let voice = VoiceGuide()
@@ -54,6 +58,7 @@ struct RoutePoint: Codable, Identifiable {
     private var lastDetectionNote = Date.distantPast
     private var lastNotedObject: String?
     private var currentTripID = UUID()
+    private var currentTripStartedAt = Date()
     private var previousBrightness: CGFloat?
 
     init() {
@@ -63,13 +68,26 @@ struct RoutePoint: Codable, Identifiable {
         if let points = RouteStorage.load() { breadcrumbs = points }
         if let rawID = UserDefaults.standard.string(forKey: "SafePath.currentTrip"), let id = UUID(uuidString: rawID) { currentTripID = id }
         else if let id = breadcrumbs.last?.tripID { currentTripID = id }
+        if let startedAt = UserDefaults.standard.object(forKey: "SafePath.currentTripStartedAt") as? Date { currentTripStartedAt = startedAt }
+        stepCount = UserDefaults.standard.object(forKey: "SafePath.steps.\(currentTripID.uuidString)") as? Int
         location.onLocation = { [weak self] coordinate in
             guard let self, self.isTripActive else { return }
             self.appendRoutePoint(RoutePoint(coordinate, tripID: self.currentTripID))
         }
         location.onIssue = { [weak self] message in self?.permissionMessage = message }
+        pedometer.onSteps = { [weak self] steps in
+            guard let self else { return }
+            self.stepCount = steps
+            UserDefaults.standard.set(steps, forKey: "SafePath.steps.\(self.currentTripID.uuidString)")
+        }
+        pedometer.onIssue = { [weak self] message in self?.permissionMessage = message }
         camera.onDetections = { [weak self] objects in self?.consume(objects) }
         speechInput.onText = { [weak self] text in self?.destination = text }
+        speechInput.onFinalText = { [weak self] text in
+            guard let self else { return }
+            self.destination = text
+            self.startTrip()
+        }
         speechInput.onError = { [weak self] text in
             self?.permissionMessage = text
             self?.isListeningForDestination = false
@@ -92,9 +110,14 @@ struct RoutePoint: Codable, Identifiable {
     var currentTripObstacleCount: Int { breadcrumbs.filter { $0.tripID == currentTripID && $0.event != nil }.count }
 
     func startCamera() {
+        guard !isCameraActive else { return }
         isCameraActive = true
         latestObstacle = "Path clear"
-        camera.start { [weak self] message in self?.permissionMessage = message }
+        camera.start { [weak self] message in
+            guard let self else { return }
+            self.permissionMessage = message
+            if message != nil { self.isCameraActive = false }
+        }
     }
     func stopCamera() { isCameraActive = false; camera.stop(); alerts.update(distanceMeters: nil) }
     func appDidEnterBackground() { restoreBrightness(); stopCamera() }
@@ -118,12 +141,12 @@ struct RoutePoint: Codable, Identifiable {
         guard !destinationQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             permissionMessage = "Say or type a place name, such as “Take me to the library.”"; return
         }
+        beginTripIfNeeded()
+        isTripActive = true
+        pedometer.start(from: currentTripStartedAt)
         location.start { [weak self] authorized in
             guard let self else { return }
-            if authorized {
-                if !self.isTripActive { self.beginNewTrip() }
-                self.isTripActive = true
-            } else {
+            if !authorized {
                 self.permissionMessage = "Google Maps will open. Allow location access to record this walk in Drishti."
             }
             MapsLink.open(destination: destinationQuery) { opened in
@@ -131,7 +154,7 @@ struct RoutePoint: Codable, Identifiable {
             }
         }
     }
-    func stopTrip() { isTripActive = false; location.stop() }
+    func stopTrip() { isTripActive = false; location.stop(); pedometer.stop() }
     func saveHomeAtCurrentLocation() {
         permissionMessage = "Finding your location to save as home…"
         location.requestCurrentLocation { [weak self] coordinate in
@@ -141,12 +164,12 @@ struct RoutePoint: Codable, Identifiable {
     }
     func goHome() {
         guard let savedHome else { permissionMessage = "Save your home location before asking for directions home."; return }
+        beginTripIfNeeded()
+        isTripActive = true
+        pedometer.start(from: currentTripStartedAt)
         location.start { [weak self] authorized in
             guard let self else { return }
-            if authorized {
-                if !self.isTripActive { self.beginNewTrip() }
-                self.isTripActive = true
-            } else {
+            if !authorized {
                 self.permissionMessage = "Google Maps will open. Allow location access to record this walk in Drishti."
             }
             MapsLink.open(coordinate: savedHome) { opened in
@@ -227,11 +250,49 @@ struct RoutePoint: Codable, Identifiable {
         if breadcrumbs.count > 5000 { breadcrumbs.removeFirst(breadcrumbs.count - 5000) }
         RouteStorage.save(breadcrumbs)
     }
-    private func beginNewTrip() {
+    private func beginTripIfNeeded() {
+        guard !isTripActive else { return }
         currentTripID = UUID()
         UserDefaults.standard.set(currentTripID.uuidString, forKey: "SafePath.currentTrip")
+        currentTripStartedAt = .now
+        UserDefaults.standard.set(currentTripStartedAt, forKey: "SafePath.currentTripStartedAt")
+        stepCount = nil
+        UserDefaults.standard.removeObject(forKey: "SafePath.steps.\(currentTripID.uuidString)")
         lastDetectionNote = .distantPast
         lastNotedObject = nil
+    }
+}
+
+private final class PedometerRecorder {
+    private let pedometer = CMPedometer()
+    private var startDate: Date?
+    var onSteps: ((Int) -> Void)?
+    var onIssue: ((String) -> Void)?
+    func start(from startDate: Date) {
+        guard CMPedometer.isStepCountingAvailable() else { return }
+        pedometer.stopUpdates()
+        self.startDate = startDate
+        pedometer.startUpdates(from: startDate) { [weak self] data, error in
+            if error != nil {
+                DispatchQueue.main.async { self?.onIssue?("Allow Motion & Fitness access to count steps for this walk.") }
+                return
+            }
+            guard let steps = data?.numberOfSteps.intValue else { return }
+            DispatchQueue.main.async { self?.onSteps?(steps) }
+        }
+    }
+    func stop() {
+        pedometer.stopUpdates()
+        guard let startDate else { return }
+        self.startDate = nil
+        pedometer.queryPedometerData(from: startDate, to: .now) { [weak self] data, error in
+            if error != nil {
+                DispatchQueue.main.async { self?.onIssue?("Could not read step totals. Check Motion & Fitness access in Settings.") }
+                return
+            }
+            guard let steps = data?.numberOfSteps.intValue else { return }
+            DispatchQueue.main.async { self?.onSteps?(steps) }
+        }
     }
 }
 
@@ -256,6 +317,7 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
     var onLocation: ((CLLocationCoordinate2D) -> Void)?
     var onIssue: ((String) -> Void)?
     private var oneShot: ((CLLocationCoordinate2D) -> Void)?
+    private var oneShotTimeout: DispatchWorkItem?
     private var pendingStart: ((Bool) -> Void)?
     private var wantsUpdates = false
     var lastCoordinate: CLLocationCoordinate2D?
@@ -286,34 +348,69 @@ private final class LocationRecorder: NSObject, CLLocationManagerDelegate {
         finishStart(true)
     }
     private func finishStart(_ success: Bool) { let completion = pendingStart; pendingStart = nil; completion?(success) }
-    func stop() { wantsUpdates = false; manager.stopUpdatingLocation(); finishStart(false) }
+    func stop() {
+        wantsUpdates = false
+        oneShot = nil
+        oneShotTimeout?.cancel(); oneShotTimeout = nil
+        manager.stopUpdatingLocation()
+        finishStart(false)
+    }
     func requestCurrentLocation(_ completion: @escaping (CLLocationCoordinate2D) -> Void) {
+        oneShotTimeout?.cancel()
         oneShot = completion
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()
-        case .authorizedWhenInUse, .authorizedAlways: manager.requestLocation()
+        case .authorizedWhenInUse, .authorizedAlways: beginOneShotUpdates()
         default: onIssue?("Location access is off. Enable it in iPhone Settings to save home."); oneShot = nil
         }
     }
+    private func beginOneShotUpdates() {
+        guard oneShot != nil else { return }
+        oneShotTimeout?.cancel()
+        manager.startUpdatingLocation()
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, self.oneShot != nil else { return }
+            self.oneShot = nil
+            self.oneShotTimeout = nil
+            if !self.wantsUpdates { self.manager.stopUpdatingLocation() }
+            self.onIssue?("Could not get a GPS fix. Move outdoors, check Location Services, and try saving home again.")
+        }
+        oneShotTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25, execute: timeout)
+    }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let coordinate = locations.last?.coordinate else { return }
-        lastCoordinate = coordinate; onLocation?(coordinate); oneShot?(coordinate); oneShot = nil
+        guard let location = locations.last,
+              location.horizontalAccuracy >= 0,
+              Date().timeIntervalSince(location.timestamp) < 30 else { return }
+        let coordinate = location.coordinate
+        lastCoordinate = coordinate
+        onLocation?(coordinate)
+        if let oneShot {
+            self.oneShot = nil
+            oneShotTimeout?.cancel(); oneShotTimeout = nil
+            if !wantsUpdates { manager.stopUpdatingLocation() }
+            oneShot(coordinate)
+        }
     }
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         if manager.authorizationStatus == .authorizedAlways {
             if wantsUpdates { beginUpdates(always: true) }
-            else if oneShot != nil { manager.requestLocation() }
+            else if oneShot != nil { beginOneShotUpdates() }
         } else if manager.authorizationStatus == .authorizedWhenInUse {
             if pendingStart != nil { beginUpdates(always: false) }
-            else if oneShot != nil { manager.requestLocation() }
+            else if oneShot != nil { beginOneShotUpdates() }
         } else if manager.authorizationStatus == .denied || manager.authorizationStatus == .restricted {
             onIssue?("Location access is off. Enable it in iPhone Settings to save your path.")
             oneShot = nil
+            oneShotTimeout?.cancel(); oneShotTimeout = nil
             finishStart(false)
         }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        oneShot = nil
+        if oneShot != nil {
+            // A transient GPS miss is common indoors; keep location updates alive until timeout.
+            return
+        }
         onIssue?("Could not get your location. Check Location Services and try again.")
         finishStart(false)
     }

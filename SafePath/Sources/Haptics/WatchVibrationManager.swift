@@ -48,7 +48,13 @@ final class WatchVibrationManager: NSObject, UNUserNotificationCenterDelegate {
         let feedback = UIImpactFeedbackGenerator(style: .heavy)
         feedback.prepare()
         feedback.impactOccurred(intensity: 1)
-        schedulePulse(test: true)
+        if authorized {
+            schedulePulse(test: true)
+        } else {
+            requestPermission { [weak self] granted in
+                if granted { self?.schedulePulse(test: true) }
+            }
+        }
     }
     private func schedulePulse(test: Bool) {
         guard authorized else { return }

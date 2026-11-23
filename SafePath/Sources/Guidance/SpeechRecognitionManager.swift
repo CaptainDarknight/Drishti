@@ -8,6 +8,7 @@ final class SpeechRecognitionManager {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     var onText: ((String) -> Void)?
+    var onFinalText: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onFinish: (() -> Void)?
     private var isActive = false
@@ -59,7 +60,9 @@ final class SpeechRecognitionManager {
                 if let result {
                     let text = result.bestTranscription.formattedString
                     DispatchQueue.main.async { self.onText?(text) }
-                    if result.isFinal { DispatchQueue.main.async { self.stop() } }
+                    if result.isFinal {
+                        DispatchQueue.main.async { self.onFinalText?(text); self.stop() }
+                    }
                 }
                 if error != nil { DispatchQueue.main.async { self.stop() } }
             }

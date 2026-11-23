@@ -34,7 +34,7 @@ final class ObjectDetector {
     }
     func process(pixelBuffer: CVPixelBuffer) {
         lock.lock()
-        guard !running, Date().timeIntervalSince(lastFrame) >= 0.15 else { lock.unlock(); return }
+        guard !running, Date().timeIntervalSince(lastFrame) >= 0.35 else { lock.unlock(); return }
         running = true; lastFrame = .now
         lock.unlock()
         queue.async { [weak self] in
@@ -50,7 +50,7 @@ final class ObjectDetector {
                 let rectangles = VNDetectRectanglesRequest()
                 rectangles.minimumConfidence = 0.55
                 rectangles.minimumSize = 0.08
-                rectangles.maximumObservations = 8
+                rectangles.maximumObservations = 6
                 request = rectangles
             }
             do { try VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .right).perform([request]) }
@@ -62,7 +62,7 @@ final class ObjectDetector {
                 let rectangles = ((request.results as? [VNRectangleObservation]) ?? []).filter { $0.confidence >= 0.55 }
                 // Vision's built-in image classifier supplies semantic labels for detected regions
                 // when no dedicated object-detection model is bundled with the app.
-                let classificationRequests: [VNClassifyImageRequest] = rectangles.prefix(5).map { rectangle in
+                let classificationRequests: [VNClassifyImageRequest] = rectangles.prefix(3).map { rectangle in
                     let classification = VNClassifyImageRequest()
                     classification.regionOfInterest = rectangle.boundingBox
                     return classification

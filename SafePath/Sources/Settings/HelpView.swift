@@ -8,6 +8,7 @@ struct HelpView: View {
                 Section("Getting started") {
                     Label("Allow camera access for obstacle awareness.", systemImage: "camera")
                     Label("Allow location access while using Drishti to record a trip.", systemImage: "location")
+                    Label("Allow Motion & Fitness access to show step totals.", systemImage: "figure.walk")
                     Label("Enter a destination and open the walking route in Google Maps.", systemImage: "map")
                     Label("Save your home location before using Take me home.", systemImage: "house")
                 }
@@ -21,7 +22,7 @@ struct HelpView: View {
                     Text("Route breadcrumbs and saved home stay on this iPhone. Drishti is an assistive prototype, not a certified navigation device. Keep using a cane, guide dog, mobility training, and other support. Vision can miss or mislabel objects; the SE 2 may not provide reliable distance estimates. iOS may delay or throttle watch notifications.")
                 }
                 Section("Camera and screen") {
-                    Text("Dim Screen lowers brightness while the camera is running. iOS limits camera and AR work when the app is backgrounded or the screen is locked; keep the phone awake during use.")
+                    Text("Obstacle awareness uses the rear camera while the full-screen camera view is open. iOS pauses camera analysis when Drishti is backgrounded; GPS route recording can continue with Always location access. Keep the phone unlocked while using obstacle awareness.")
                 }
                 Section("Route path") {
                     Text("Google Maps receives your destination and provides its own walking directions. Drishti records GPS breadcrumbs while location access is available and adds detected obstacle notes. Obstacle voice cues can say left, ahead, or right. Drishti does not provide live turn-by-turn route instructions.")
